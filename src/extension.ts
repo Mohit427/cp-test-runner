@@ -20,6 +20,12 @@ interface TestResult {
 	stderr: string;
 }
 
+interface TestCase {
+	name: string;
+	input: string;
+	expected: string;
+}
+
 // Step A
 async function getActiveCppFile(): Promise<string | undefined> {
 	const editor = vscode.window.activeTextEditor;
@@ -81,7 +87,7 @@ function compile(sourcePath: string): Promise<CompileResult> {
 	});
 }
 
-// Step D: normalize line endings, trailing spaces per line, trailing newlines
+// Step D
 function normalize(text: string): string {
 	return text
 		.replace(/\r\n/g, '\n')
@@ -91,7 +97,7 @@ function normalize(text: string): string {
 		.replace(/\n+$/, '');
 }
 
-// Step C: run the binary on one input, enforce a timeout, compare with expected
+// Step C
 function runTest(
 	binary: string,
 	name: string,
@@ -119,7 +125,6 @@ function runTest(
 			stderr += chunk.toString();
 		});
 
-		// program may exit before reading all input -> EPIPE; ignore it
 		child.stdin.on('error', () => {});
 
 		child.on('error', (err) => {
@@ -151,8 +156,66 @@ function runTest(
 		});
 
 		child.stdin.write(input);
-		child.stdin.end(); // without this, programs reading until EOF hang
+		child.stdin.end();
 	});
+}
+
+// Hour 3: sample storage. solution.cpp -> solution.tests/
+function getTestsDir(sourcePath: string): string {
+	const base = path.basename(sourcePath, path.extname(sourcePath));
+	return path.join(path.dirname(sourcePath), `${base}.tests`);
+}
+
+function loadTests(sourcePath: string): { dir: string; tests: TestCase[]; warnings: string[] } {
+	const dir = getTestsDir(sourcePath);
+	const tests: TestCase[] = [];
+	const warnings: string[] = [];
+
+	if (!fs.existsSync(dir)) {
+		return { dir, tests, warnings };
+	}
+
+	const inputFiles = fs
+		.readdirSync(dir)
+		.filter((f) => f.endsWith('.in'))
+		.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+	for (const file of inputFiles) {
+		const name = file.slice(0, -3);
+		const inPath = path.join(dir, file);
+		const outPath = path.join(dir, `${name}.out`);
+
+		if (!fs.existsSync(outPath)) {
+			warnings.push(`${file} has no matching ${name}.out, skipped`);
+			continue;
+		}
+
+		tests.push({
+			name,
+			input: fs.readFileSync(inPath, 'utf8'),
+			expected: fs.readFileSync(outPath, 'utf8'),
+		});
+	}
+
+	return { dir, tests, warnings };
+}
+
+// Creates the folder with empty 1.in / 1.out and opens them for editing
+async function createStarterTests(dir: string): Promise<void> {
+	fs.mkdirSync(dir, { recursive: true });
+	const inPath = path.join(dir, '1.in');
+	const outPath = path.join(dir, '1.out');
+	if (!fs.existsSync(inPath)) {
+		fs.writeFileSync(inPath, '');
+	}
+	if (!fs.existsSync(outPath)) {
+		fs.writeFileSync(outPath, '');
+	}
+
+	const outDoc = await vscode.workspace.openTextDocument(outPath);
+	await vscode.window.showTextDocument(outDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+	const inDoc = await vscode.workspace.openTextDocument(inPath);
+	await vscode.window.showTextDocument(inDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -166,8 +229,21 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
+			const { dir, tests, warnings } = loadTests(filePath);
+
+			if (tests.length === 0) {
+				await createStarterTests(dir);
+				vscode.window.showInformationMessage(
+					'No samples found. Created 1.in and 1.out. Fill them in, save, and run again.'
+				);
+				return;
+			}
+
 			output.clear();
 			output.show(true);
+			for (const w of warnings) {
+				output.appendLine(`warning: ${w}`);
+			}
 			output.appendLine(`Compiling ${filePath} ...`);
 
 			const result = await compile(filePath);
@@ -176,20 +252,26 @@ export function activate(context: vscode.ExtensionContext) {
 				output.appendLine(result.message);
 				return;
 			}
-			output.appendLine('Compiled OK');
+			output.appendLine(`Compiled OK. Running ${tests.length} test(s)...\n`);
 
-			// Hardcoded test for now: Hour 3 replaces this with saved samples.
-			// Edit input/expected to match YOUR program.
-			const test = await runTest(result.binary, 'test 1', '3\n1 2 3\n', '6');
+			let passed = 0;
+			for (const t of tests) {
+				const r = await runTest(result.binary, t.name, t.input, t.expected);
+				if (r.status === 'PASS') {
+					passed++;
+				}
 
-			output.appendLine(`[${test.status}] ${test.name} (${test.timeMs} ms)`);
-			if (test.status !== 'PASS') {
-				output.appendLine(`  expected: ${JSON.stringify(test.expected)}`);
-				output.appendLine(`  actual:   ${JSON.stringify(test.actual)}`);
+				output.appendLine(`[${r.status}] ${r.name} (${r.timeMs} ms)`);
+				if (r.status === 'FAIL') {
+					output.appendLine(`  expected: ${JSON.stringify(r.expected)}`);
+					output.appendLine(`  actual:   ${JSON.stringify(r.actual)}`);
+				}
+				if (r.stderr && r.status !== 'PASS') {
+					output.appendLine(`  stderr: ${r.stderr}`);
+				}
 			}
-			if (test.stderr) {
-				output.appendLine(`  stderr: ${test.stderr}`);
-			}
+
+			output.appendLine(`\n${passed}/${tests.length} passed`);
 		}
 	);
 
