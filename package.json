@@ -1,13 +1,33 @@
 {
   "name": "cp-test-runner",
   "displayName": "CP Test Runner",
-  "description": "\"Run C++ solutions against sample tests with a live results panel\"",
-  "version": "0.0.1",
+  "description": "Run C++ solutions against sample tests with a live results panel",
+  "version": "0.1.0",
+  "publisher": "mohit427",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mohit427/cp-test-runner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mohit427/cp-test-runner/issues"
+  },
+  "homepage": "https://github.com/Mohit427/cp-test-runner#readme",
   "engines": {
     "vscode": "^1.140.0"
   },
   "categories": [
+    "Testing",
     "Other"
+  ],
+  "keywords": [
+    "competitive programming",
+    "c++",
+    "test runner",
+    "codeforces",
+    "leetcode",
+    "icpc"
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
@@ -15,7 +35,15 @@
     "commands": [
       {
         "command": "cp-test-runner.runAgainstSamples",
-        "title": "Run Against Samples"
+        "title": "Run Against Samples",
+        "category": "CP Test Runner"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cp-test-runner.runAgainstSamples",
+        "key": "ctrl+alt+r",
+        "when": "editorLangId == cpp"
       }
     ]
   },

@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { performance } from 'perf_hooks';
+import { showResults } from './panel';
 
 type CompileResult =
 	| { ok: true; binary: string }
@@ -25,6 +26,16 @@ interface TestCase {
 	input: string;
 	expected: string;
 }
+
+interface PanelMessage {
+	type: 'run' | 'add' | 'delete';
+	name?: string;
+	tests?: TestCase[];
+}
+
+// The .cpp file the panel is currently attached to
+let currentSource: string | undefined;
+let running = false;
 
 // Step A
 async function getActiveCppFile(): Promise<string | undefined> {
@@ -160,7 +171,8 @@ function runTest(
 	});
 }
 
-// Hour 3: sample storage. solution.cpp -> solution.tests/
+// ---------- sample storage ----------
+
 function getTestsDir(sourcePath: string): string {
 	const base = path.basename(sourcePath, path.extname(sourcePath));
 	return path.join(path.dirname(sourcePath), `${base}.tests`);
@@ -200,27 +212,114 @@ function loadTests(sourcePath: string): { dir: string; tests: TestCase[]; warnin
 	return { dir, tests, warnings };
 }
 
-// Creates the folder with empty 1.in / 1.out and opens them for editing
-async function createStarterTests(dir: string): Promise<void> {
+// Names come back from the webview, so never trust them as paths
+function isSafeName(name: string): boolean {
+	return name.length > 0 && !/[\\/]/.test(name) && !name.startsWith('.');
+}
+
+function saveTests(dir: string, tests: TestCase[]): void {
 	fs.mkdirSync(dir, { recursive: true });
-	const inPath = path.join(dir, '1.in');
-	const outPath = path.join(dir, '1.out');
-	if (!fs.existsSync(inPath)) {
-		fs.writeFileSync(inPath, '');
+	for (const t of tests) {
+		if (!isSafeName(t.name)) {
+			continue;
+		}
+		fs.writeFileSync(path.join(dir, `${t.name}.in`), t.input);
+		fs.writeFileSync(path.join(dir, `${t.name}.out`), t.expected);
 	}
-	if (!fs.existsSync(outPath)) {
-		fs.writeFileSync(outPath, '');
+}
+
+function addTest(sourcePath: string): void {
+	const { dir, tests } = loadTests(sourcePath);
+	let max = 0;
+	for (const t of tests) {
+		if (/^\d+$/.test(t.name)) {
+			max = Math.max(max, parseInt(t.name, 10));
+		}
+	}
+	const name = String(max + 1);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, `${name}.in`), '');
+	fs.writeFileSync(path.join(dir, `${name}.out`), '');
+}
+
+function deleteTest(dir: string, name: string): void {
+	if (!isSafeName(name)) {
+		return;
+	}
+	fs.rmSync(path.join(dir, `${name}.in`), { force: true });
+	fs.rmSync(path.join(dir, `${name}.out`), { force: true });
+}
+
+// ---------- panel glue ----------
+
+function refresh(results: TestResult[], compileError?: string): void {
+	if (!currentSource) {
+		return;
+	}
+	const { tests, warnings } = loadTests(currentSource);
+	showResults(
+		{ fileName: path.basename(currentSource), compileError, warnings, tests, results },
+		handleMessage
+	);
+}
+
+async function runAll(): Promise<void> {
+	if (!currentSource || running) {
+		return;
+	}
+	running = true;
+	try {
+		// the panel is focused, so make sure the .cpp on disk is current
+		const doc = vscode.workspace.textDocuments.find((d) => d.fileName === currentSource);
+		if (doc && doc.isDirty) {
+			await doc.save();
+		}
+
+		const { tests } = loadTests(currentSource);
+		if (tests.length === 0) {
+			refresh([]);
+			return;
+		}
+
+		const compiled = await compile(currentSource);
+		if (!compiled.ok) {
+			refresh([], compiled.message);
+			return;
+		}
+
+		const results: TestResult[] = [];
+		for (const t of tests) {
+			results.push(await runTest(compiled.binary, t.name, t.input, t.expected));
+		}
+		refresh(results);
+	} finally {
+		running = false;
+	}
+}
+
+async function handleMessage(msg: PanelMessage): Promise<void> {
+	if (!currentSource) {
+		return;
+	}
+	const dir = getTestsDir(currentSource);
+
+	// always persist what is currently typed in the boxes first
+	if (Array.isArray(msg.tests)) {
+		saveTests(dir, msg.tests);
 	}
 
-	const outDoc = await vscode.workspace.openTextDocument(outPath);
-	await vscode.window.showTextDocument(outDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
-	const inDoc = await vscode.workspace.openTextDocument(inPath);
-	await vscode.window.showTextDocument(inDoc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+	if (msg.type === 'add') {
+		addTest(currentSource);
+		refresh([]);
+	} else if (msg.type === 'delete' && msg.name) {
+		deleteTest(dir, msg.name);
+		refresh([]);
+	} else if (msg.type === 'run') {
+		await runAll();
+	}
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	const output = vscode.window.createOutputChannel('CP Test Runner');
-
 	const disposable = vscode.commands.registerCommand(
 		'cp-test-runner.runAgainstSamples',
 		async () => {
@@ -228,54 +327,20 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!filePath) {
 				return;
 			}
+			currentSource = filePath;
 
-			const { dir, tests, warnings } = loadTests(filePath);
-
-			if (tests.length === 0) {
-				await createStarterTests(dir);
-				vscode.window.showInformationMessage(
-					'No samples found. Created 1.in and 1.out. Fill them in, save, and run again.'
-				);
+			// first time for this file: create an empty starter test and let the user fill it
+			if (loadTests(filePath).tests.length === 0) {
+				addTest(filePath);
+				refresh([]);
 				return;
 			}
 
-			output.clear();
-			output.show(true);
-			for (const w of warnings) {
-				output.appendLine(`warning: ${w}`);
-			}
-			output.appendLine(`Compiling ${filePath} ...`);
-
-			const result = await compile(filePath);
-			if (!result.ok) {
-				output.appendLine('COMPILE ERROR:');
-				output.appendLine(result.message);
-				return;
-			}
-			output.appendLine(`Compiled OK. Running ${tests.length} test(s)...\n`);
-
-			let passed = 0;
-			for (const t of tests) {
-				const r = await runTest(result.binary, t.name, t.input, t.expected);
-				if (r.status === 'PASS') {
-					passed++;
-				}
-
-				output.appendLine(`[${r.status}] ${r.name} (${r.timeMs} ms)`);
-				if (r.status === 'FAIL') {
-					output.appendLine(`  expected: ${JSON.stringify(r.expected)}`);
-					output.appendLine(`  actual:   ${JSON.stringify(r.actual)}`);
-				}
-				if (r.stderr && r.status !== 'PASS') {
-					output.appendLine(`  stderr: ${r.stderr}`);
-				}
-			}
-
-			output.appendLine(`\n${passed}/${tests.length} passed`);
+			await runAll();
 		}
 	);
 
-	context.subscriptions.push(disposable, output);
+	context.subscriptions.push(disposable);
 }
 
 export function deactivate() {}

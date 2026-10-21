@@ -1,71 +1,65 @@
-# cp-test-runner README
+# CP Test Runner
 
-This is the README for your extension "cp-test-runner". After writing up a brief description, we recommend including the following sections.
+Run your C++ solution against sample tests in one click, with a live results panel inside VS Code. Built for competitive programming and contest practice.
+
+![Demo](images/demo.gif)
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+- Compiles the active `.cpp` file with g++ and runs it on every saved sample
+- Clear verdicts per test: **PASS**, **FAIL**, **TLE** (time limit exceeded), **RE** (runtime error)
+- Side-by-side expected vs actual output, with differing lines highlighted
+- Add, edit, and delete samples directly in the results panel
+- Compile errors shown in full, so you can fix them without leaving the editor
+- Samples are stored as plain files next to your solution, so they are easy to keep in Git
+- Windows line endings and trailing whitespace never cause false failures
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- `g++` available on your PATH
+  - **Windows:** install MinGW-w64 or MSYS2 and add its `bin` folder to PATH
+  - **macOS:** `xcode-select --install`
+  - **Linux:** install `g++` from your package manager
 
-## Extension Settings
+## Usage
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+1. Open a `.cpp` file.
+2. Run **CP Test Runner: Run Against Samples** from the Command Palette (or press `Ctrl+Alt+R`).
+3. The first time, an empty test is created. Fill in the input and expected output in the panel.
+4. Press **Run**. Use **Add test** and **Delete** to manage your samples.
 
-For example:
+## How samples are stored
 
-This extension contributes the following settings:
+For `solution.cpp`, samples live in a `solution.tests/` folder beside it:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+```
+solution.cpp
+solution.tests/
+  1.in    1.out
+  2.in    2.out
+```
 
-## Known Issues
+Each `.in` file is fed to your program, and its output is compared with the matching `.out` file.
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+## Install
 
-## Release Notes
+**From a release:** download the `.vsix` from the [Releases](https://github.com/Mohit427/cp-test-runner/releases) page, then in VS Code open Extensions, click the `...` menu, and choose **Install from VSIX...**.
 
-Users appreciate release notes as you update your extension.
+**From Open VSX:** search for "CP Test Runner" in editors that use Open VSX.
 
-### 1.0.0
+## Known limitations
 
-Initial release of ...
+- C++ only (compiled with `-O2 -std=c++17`)
+- Fixed 2 second time limit per test
+- Samples are entered manually, with no automatic fetching from judges
 
-### 1.0.1
+## Roadmap
 
-Fixed issue #.
+- Configurable compiler flags and time limit
+- Support for Python and Java
+- Status bar button and test-all summary
+- Import samples from the clipboard
 
-### 1.1.0
+## License
 
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+MIT
