@@ -1,7 +1,9 @@
 .vscode/**
 .vscode-test/**
+.vscode-test.mjs
 src/**
 node_modules/**
+out/test/**
 **/*.ts
 **/*.map
 tsconfig.json
@@ -9,4 +11,5 @@ eslint.config.mjs
 .eslintrc.json
 .gitignore
 .gitattributes
+vsc-extension-quickstart.md
 *.vsix
