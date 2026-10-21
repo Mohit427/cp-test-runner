@@ -1,26 +1,43 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+// Step A: returns the path of the active, saved .cpp file, or undefined on any problem
+async function getActiveCppFile(): Promise<string | undefined> {
+	const editor = vscode.window.activeTextEditor;
+	if (!editor) {
+		vscode.window.showErrorMessage('Open a .cpp file first.');
+		return undefined;
+	}
+
+	const document = editor.document;
+
+	if (document.languageId !== 'cpp') {
+		vscode.window.showErrorMessage('The active file is not a C++ file.');
+		return undefined;
+	}
+
+	if (document.isUntitled) {
+		vscode.window.showErrorMessage('Save the file first so it has a path.');
+		return undefined;
+	}
+
+	await document.save(); // make sure disk matches what is on screen
+	return document.fileName;
+}
+
 export function activate(context: vscode.ExtensionContext) {
-
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "cp-test-runner" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('cp-test-runner.runAgainstSamples', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Run Triggered!');
-	});
+	const disposable = vscode.commands.registerCommand(
+		'cp-test-runner.runAgainstSamples',
+		async () => {
+			const filePath = await getActiveCppFile();
+			if (!filePath) {
+				return;
+			}
+			// Placeholder: Step B (compile) will replace this
+			vscode.window.showInformationMessage(`Runner triggered on: ${filePath}`);
+		}
+	);
 
 	context.subscriptions.push(disposable);
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {}
