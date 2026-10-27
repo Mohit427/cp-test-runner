@@ -3,7 +3,7 @@
   "displayName": "CP Test Runner",
   "description": "Run C++ solutions against sample tests with a live results panel",
   "version": "0.1.0",
-  "publisher": "mohit427",
+  "publisher": "mohitkumar",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {
@@ -37,8 +37,23 @@
         "command": "cp-test-runner.runAgainstSamples",
         "title": "Run Against Samples",
         "category": "CP Test Runner"
+      },
+      {
+        "command": "cp-test-runner.setLlmApiKey",
+        "title": "Set LLM API Key",
+        "category": "CP Test Runner"
       }
     ],
+    "configuration": {
+      "title": "CP Test Runner",
+      "properties": {
+        "cp-test-runner.llmModel": {
+          "type": "string",
+          "default": "gemini-2.5-flash",
+          "markdownDescription": "Gemini model used by **Explain failure**, for example `gemini-2.5-flash`. Set the API key with the **CP Test Runner: Set LLM API Key** command."
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "cp-test-runner.runAgainstSamples",

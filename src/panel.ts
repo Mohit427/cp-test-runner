@@ -99,13 +99,20 @@ function renderCard(t: TestView, r: ResultView | undefined): string {
 	const time = r ? `<span class="time">${r.timeMs} ms</span>` : '';
 	const n = esc(t.name);
 
+	// passing tests render exactly as before; only failures get the extra button and hint box
+	const failed = r !== undefined && r.status !== 'PASS';
+	const explainBtn = failed ? `<button class="explain small" data-name="${n}">Explain</button>` : '';
+	const hintBox = failed ? `<div class="explain-out" data-name="${n}" hidden></div>` : '';
+
 	return `<div class="card ${status}">
 		<div class="head">
 			${badge}
 			<span class="name">${n}</span>
 			${time}
+			${explainBtn}
 			<button class="del small" data-name="${n}">Delete</button>
 		</div>
+		${hintBox}
 		${result}
 		<div class="cols">
 			<div><h4>Input</h4>
@@ -181,6 +188,11 @@ function render(data: PanelData, nonce: string): string {
 	.compile { border: 1px solid #da3633; border-radius: 4px; padding: 10px 12px; margin-bottom: 12px; }
 	.compile h3 { color: var(--vscode-testing-iconFailed, #f85149); }
 	.warn { background: rgba(210,153,34,0.18); padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.9em; }
+	.explain-out { white-space: pre-wrap; margin: 8px 0 0 0; padding: 8px 10px; border-radius: 4px;
+		background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.12));
+		border-left: 3px solid var(--vscode-textLink-foreground, #3794ff); }
+	.explain-out.error { border-left-color: var(--vscode-testing-iconFailed, #f85149); }
+	button:disabled { opacity: 0.6; cursor: default; }
 </style>
 </head>
 <body>
@@ -218,6 +230,31 @@ function render(data: PanelData, nonce: string): string {
 				vscode.postMessage({ type: 'delete', name: b.dataset.name, tests: collect() });
 			});
 		});
+
+		// Explain sends only the test name; the extension looks up the real data itself
+		document.querySelectorAll('.explain').forEach(function (b) {
+			b.addEventListener('click', function () {
+				if (b.disabled) { return; }
+				b.disabled = true;
+				b.textContent = 'Thinking...';
+				vscode.postMessage({ type: 'explain', name: b.dataset.name });
+			});
+		});
+
+		window.addEventListener('message', function (e) {
+			const m = e.data;
+			if (!m || m.type !== 'hint') { return; }
+			document.querySelectorAll('.explain').forEach(function (b) {
+				if (b.dataset.name === m.name) { b.disabled = false; b.textContent = 'Explain'; }
+			});
+			document.querySelectorAll('.explain-out').forEach(function (box) {
+				if (box.dataset.name !== m.name) { return; }
+				// model output is untrusted: textContent never parses it as HTML
+				box.textContent = String(m.text);
+				box.classList.toggle('error', !!m.error);
+				box.hidden = false;
+			});
+		});
 	</script>
 </body>
 </html>`;
@@ -241,4 +278,11 @@ export function showResults(data: PanelData, handler: MessageHandler): void {
 		panel.reveal(undefined, true);
 	}
 	panel.webview.html = render(data, getNonce());
+}
+
+// Update the open panel without re-rendering, so unsaved textbox edits survive
+export function postToPanel(msg: unknown): void {
+	if (panel) {
+		panel.webview.postMessage(msg);
+	}
 }

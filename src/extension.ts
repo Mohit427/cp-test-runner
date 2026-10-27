@@ -4,7 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { performance } from 'perf_hooks';
-import { showResults } from './panel';
+import { showResults, postToPanel } from './panel';
+import { explainFailure } from './explain';
 
 type CompileResult =
 	| { ok: true; binary: string }
@@ -28,7 +29,7 @@ interface TestCase {
 }
 
 interface PanelMessage {
-	type: 'run' | 'add' | 'delete';
+	type: 'run' | 'add' | 'delete' | 'explain';
 	name?: string;
 	tests?: TestCase[];
 }
@@ -36,6 +37,17 @@ interface PanelMessage {
 // The .cpp file the panel is currently attached to
 let currentSource: string | undefined;
 let running = false;
+
+const API_KEY_SECRET = 'cp-test-runner.llmApiKey';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+let secrets: vscode.SecretStorage | undefined;
+
+// Snapshot of what actually ran, so a hint matches the code that produced the verdict
+// even if the user has edited the file since
+let lastRun: { source: string; tests: TestCase[]; results: TestResult[] } | undefined;
+// Bumped on every re-render; replies for an older panel are dropped
+let panelVersion = 0;
+const inFlight = new Set<string>();
 
 // Step A
 async function getActiveCppFile(): Promise<string | undefined> {
@@ -257,6 +269,7 @@ function refresh(results: TestResult[], compileError?: string): void {
 		return;
 	}
 	const { tests, warnings } = loadTests(currentSource);
+	panelVersion++;
 	showResults(
 		{ fileName: path.basename(currentSource), compileError, warnings, tests, results },
 		handleMessage
@@ -287,10 +300,12 @@ async function runAll(): Promise<void> {
 			return;
 		}
 
+		const source = fs.readFileSync(currentSource, 'utf8');
 		const results: TestResult[] = [];
 		for (const t of tests) {
 			results.push(await runTest(compiled.binary, t.name, t.input, t.expected));
 		}
+		lastRun = { source, tests, results };
 		refresh(results);
 	} finally {
 		running = false;
@@ -316,10 +331,88 @@ async function handleMessage(msg: PanelMessage): Promise<void> {
 		refresh([]);
 	} else if (msg.type === 'run') {
 		await runAll();
+	} else if (msg.type === 'explain' && msg.name) {
+		await explainTest(msg.name);
+	}
+}
+
+// ---------- explain failure ----------
+
+async function setApiKey(): Promise<void> {
+	const key = await vscode.window.showInputBox({
+		title: 'CP Test Runner: Set LLM API Key',
+		prompt: 'Paste your Gemini API key. It is kept in VS Code secret storage. Leave empty to remove it.',
+		password: true,
+		ignoreFocusOut: true,
+	});
+	if (key === undefined || !secrets) {
+		return; // cancelled
+	}
+	if (key.trim() === '') {
+		await secrets.delete(API_KEY_SECRET);
+		vscode.window.showInformationMessage('LLM API key removed.');
+	} else {
+		await secrets.store(API_KEY_SECRET, key.trim());
+		vscode.window.showInformationMessage('LLM API key saved.');
+	}
+}
+
+async function explainTest(name: string): Promise<void> {
+	const version = panelVersion;
+	const flightKey = `${version}:${name}`;
+	if (inFlight.has(flightKey)) {
+		return; // double click
+	}
+	const reply = (text: string, error: boolean) => {
+		if (version === panelVersion) {
+			postToPanel({ type: 'hint', name, text, error });
+		}
+	};
+
+	const run = lastRun;
+	const result = run?.results.find((r) => r.name === name);
+	const test = run?.tests.find((t) => t.name === name);
+	if (!run || !result || !test || result.status === 'PASS') {
+		reply('No failing result found for this test. Run the tests again.', true);
+		return;
+	}
+
+	const apiKey = await secrets?.get(API_KEY_SECRET);
+	if (!apiKey) {
+		reply('No LLM API key set. Run "CP Test Runner: Set LLM API Key" from the Command Palette.', true);
+		vscode.window
+			.showWarningMessage('Explain failure needs a Gemini API key.', 'Set API Key')
+			.then((choice) => {
+				if (choice) {
+					vscode.commands.executeCommand('cp-test-runner.setLlmApiKey');
+				}
+			});
+		return;
+	}
+
+	inFlight.add(flightKey);
+	try {
+		const model = vscode.workspace.getConfiguration('cp-test-runner').get<string>('llmModel') || DEFAULT_MODEL;
+		const res = await explainFailure(apiKey, model, {
+			verdict: result.status,
+			input: test.input,
+			expected: result.expected,
+			actual: result.actual,
+			stderr: result.stderr,
+			source: run.source,
+		});
+		reply(res.ok ? res.text : res.message, !res.ok);
+	} finally {
+		inFlight.delete(flightKey);
 	}
 }
 
 export function activate(context: vscode.ExtensionContext) {
+	secrets = context.secrets;
+	context.subscriptions.push(
+		vscode.commands.registerCommand('cp-test-runner.setLlmApiKey', setApiKey)
+	);
+
 	const disposable = vscode.commands.registerCommand(
 		'cp-test-runner.runAgainstSamples',
 		async () => {
